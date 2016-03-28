@@ -28,12 +28,12 @@ verify = False
 token = ''
 
 parser = argparse.ArgumentParser(description='Download Nesuss results in bulk / Merge Nessus files')
-parser.add_argument('--url', '-u', type=str, default=None, help="url to nessus instance! This or --merge must be specified")
+parser.add_argument('--url', '-u', type=str, default='localhost', help="url to nessus instance! This or --merge must be specified")
 parser.add_argument('--format','-F', type=str, default="html", choices=['nessus', 'html'], help='Format of nesuss output, defaults to html')
 parser.add_argument('-o', '--output', type=str, default=os.getcwd(), help='Output directory')
-parser.add_argument('-m', '--merge', type=bool, default=False, help='Merge all .nessus files in output directory')
+parser.add_argument('-m', '--merge', action='store_true', help='Merge all .nessus files in output directory')
+parser.add_argument('-e', '--export', action='store_true', help='Export files')
 parser.add_argument('--folder','-f', type=str, help='Scan Folder from which to download', default=0)
-parser.add_argument('--debug','-d', type=bool, default=False, help='Enable debugging output')
 args = parser.parse_args()
 
 def build_url(resource):
@@ -180,26 +180,28 @@ def merge():
                             existing_host.append(item)
         print(":: => done.")
         
-    with open(os.path.join(args.output, "nessus_merged"), 'w') as merged_file:
+    with open(os.path.join(args.output, "nessus_merged.nessus"), 'w') as merged_file:
         mainTree.write(merged_file, encoding="utf-8", xml_declaration=True)
 
     print "All .nessus files merged!"
 
 if __name__ == '__main__':
-    print os.listdir(args.output)
-    # # Download Files
-    # if args.url
-    #     # Login
-    #     username = raw_input("Username: ")
-    #     password = getpass.getpass("Password: ")
-    #     print('Logging in....')
-    #     token = login(username, password)
-        
-    #     print("Getting scan List....")
-    #     scans = get_scans()
+    # Download Files
+    if args.export or args.merge:
+        if args.export:
+            # Login
+            username = raw_input("Username: ")
+            password = getpass.getpass("Password: ")
+            print('Logging in....')
+            token = login(username, password)
+            
+            print("Getting scan List....")
+            scans = get_scans()
 
-    #     print('Downloading and Exporting Scans...')
-    #     export(scans)
-    #     # Merge files
-    # if args.merge:
-    #     merge()
+            print('Downloading and Exporting Scans...')
+            export(scans)
+            # Merge files
+        if args.merge:
+            merge()
+    else:
+        print parser.format_usage() # removes newline + None when print_usage() is used
