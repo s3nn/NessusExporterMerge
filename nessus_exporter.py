@@ -179,11 +179,11 @@ def merge():
                             print "adding finding: " + item.attrib['port'] + ":" + item.attrib['pluginID']
                             existing_host.append(item)
         print(":: => done.")
-        
+     
     with open(os.path.join(args.output, "nessus_merged.nessus"), 'w') as merged_file:
         mainTree.write(merged_file, encoding="utf-8", xml_declaration=True)
 
-    print "All .nessus files merged!"
+    print "All .nessus files merged to 'nessus_merged.nessus' file in current dir"
 
 if __name__ == '__main__':
     # Download Files
