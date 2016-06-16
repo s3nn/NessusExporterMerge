@@ -159,6 +159,7 @@ def export(scans):
 def merge():
     first = 1
     for fileName in os.listdir(args.output):
+        fileName = os.path.join(args.output, fileName)
         if ".nessus" in fileName:
             print(":: Parsing", fileName)
             if first:
