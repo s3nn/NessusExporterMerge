@@ -150,9 +150,14 @@ def export(scans):
         print "Downloading {0}".format(scans[scan_id])
         data = connect('GET', '/scans/{0}/export/{1}/download'.format(scan_id, fids[scan_id]))
         scan_name = '{0}.{1}'.format(scans[scan_id],params['format'])
-        print('Saving scan results to {0}.'.format(scan_name))
-        with open(os.path.join(args.output, scan_name), 'w') as f:
-            f.write(data)
+        scan_name_duplicate = 0
+        while True:
+            if scan_name in os.listdir(args.output):
+                print "Duplicate Scan Name!"
+                scan_name_duplicate += 1
+                scan_name = '{0}_{1}.{2}'.format(scans[scan_id], str(scan_name_duplicate), params['format'])
+            else:
+                break
 
     print "All Downloads complete! hax0r"
 
