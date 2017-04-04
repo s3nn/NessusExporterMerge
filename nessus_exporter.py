@@ -155,9 +155,13 @@ def export(scans):
             if scan_name in os.listdir(args.output):
                 print "Duplicate Scan Name!"
                 scan_name_duplicate += 1
-                scan_name = '{0}_{1}.{2}'.format(scans[scan_id], str(scan_name_duplicate), params['format'])
+                scan_name = '{0}_{1}.{2}'.format(scans[scan_id], str(scan_name_duplicate), params['format'])                
             else:
                 break
+
+        print('Saving scan results to {0}.'.format(scan_name))
+        with open(os.path.join(args.output, scan_name), 'w') as f:
+            f.write(scan_name)
 
     print "All Downloads complete! hax0r"
 
