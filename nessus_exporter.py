@@ -161,7 +161,8 @@ def export(scans):
 
         print('Saving scan results to {0}.'.format(scan_name))
         with open(os.path.join(args.output, scan_name), 'w') as f:
-            f.write(scan_name)
+            f.write(data)
+            f.close()
 
     print "All Downloads complete! hax0r"
 
