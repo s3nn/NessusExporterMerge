@@ -161,7 +161,7 @@ def export(scans):
 
         print('Saving scan results to {0}.'.format(scan_name))
         with open(os.path.join(args.output, scan_name), 'w') as f:
-            f.write(scan_name)
+            f.write(data)
 
     print "All Downloads complete! hax0r"
 
@@ -180,14 +180,14 @@ def merge():
                 tree = etree.parse(fileName)
                 for host in tree.findall('.//ReportHost'):
                     existing_host = report.find(".//ReportHost[@name='"+host.attrib['name']+"']")
-                if not existing_host:
-                    print "adding host: " + host.attrib['name']
-                    report.append(host)
-                else:
-                    for item in host.findall('ReportItem'):
-                        if not existing_host.find("ReportItem[@port='"+ item.attrib['port'] +"'][@pluginID='"+ item.attrib['pluginID'] +"']"):
-                            print "adding finding: " + item.attrib['port'] + ":" + item.attrib['pluginID']
-                            existing_host.append(item)
+                    if not existing_host:
+                        print "adding host: " + host.attrib['name']
+                        report.append(host)
+                    else:
+                        for item in host.findall('ReportItem'):
+                            if not existing_host.find("ReportItem[@port='"+ item.attrib['port'] +"'][@pluginID='"+ item.attrib['pluginID'] +"']"):
+                                print "adding finding: " + item.attrib['port'] + ":" + item.attrib['pluginID']
+                                existing_host.append(item)
         print(":: => done.")
      
     with open(os.path.join(args.output, "nessus_merged.nessus"), 'w') as merged_file:
