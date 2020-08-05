@@ -20,6 +20,7 @@ import os
 import sys
 import getpass
 import xml.etree.ElementTree as etree
+from django.utils.encoding import smart_str, smart_unicode
 
 # Hard-coded variables
 requests.packages.urllib3.disable_warnings()
@@ -107,7 +108,7 @@ def get_scans():
     folder = args.folder
     for scans in all_scans:
         if scans['folder_id'] == int(folder):
-            scans_to_export[scans['id']] = str(scans['name'])
+            scans_to_export[scans['id']] = smart_str(scans['name'])
 
     return scans_to_export
 
