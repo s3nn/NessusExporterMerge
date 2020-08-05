@@ -20,7 +20,6 @@ import os
 import sys
 import getpass
 import xml.etree.ElementTree as etree
-from django.utils.encoding import smart_str, smart_unicode
 
 # Hard-coded variables
 requests.packages.urllib3.disable_warnings()
@@ -36,6 +35,13 @@ parser.add_argument('-m', '--merge', action='store_true', help='Merge all .nessu
 parser.add_argument('-e', '--export', action='store_true', help='Export files')
 parser.add_argument('--folder','-f', type=str, help='Scan Folder from which to download', default=0)
 args = parser.parse_args()
+
+def smart_str(x):
+    if isinstance(x, unicode):
+        return unicode(x).encode("utf-8")
+    elif isinstance(x, int) or isinstance(x, float):
+        return str(x)
+    return x
 
 def build_url(resource):
     nessus_url = "https://"+args.url+":8834"
