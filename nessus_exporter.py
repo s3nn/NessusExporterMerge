@@ -36,6 +36,13 @@ parser.add_argument('-e', '--export', action='store_true', help='Export files')
 parser.add_argument('--folder','-f', type=str, help='Scan Folder from which to download', default=0)
 args = parser.parse_args()
 
+def smart_str(x):
+    if isinstance(x, unicode):
+        return unicode(x).encode("utf-8")
+    elif isinstance(x, int) or isinstance(x, float):
+        return str(x)
+    return x
+
 def build_url(resource):
     nessus_url = "https://"+args.url+":8834"
     return '{0}{1}'.format(nessus_url, resource)
@@ -107,7 +114,7 @@ def get_scans():
     folder = args.folder
     for scans in all_scans:
         if scans['folder_id'] == int(folder):
-            scans_to_export[scans['id']] = str(scans['name'])
+            scans_to_export[scans['id']] = smart_str(scans['name'])
 
     return scans_to_export
 
