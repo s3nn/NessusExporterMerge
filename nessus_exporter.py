@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!usr/bin/python
 # Modified from averagesecurityguy
 # Props to him
 # https://github.com/averagesecurityguy/
@@ -34,14 +34,10 @@ parser.add_argument('-o', '--output', type=str, default=os.getcwd(), help='Outpu
 parser.add_argument('-m', '--merge', action='store_true', help='Merge all .nessus files in output directory')
 parser.add_argument('-e', '--export', action='store_true', help='Export files')
 parser.add_argument('--folder','-f', type=str, help='Scan Folder from which to download', default=0)
+parser.add_argument('--access', type=str, help='Nessus API Access Key', default=0)
+parser.add_argument('--secret', type=str, help='Nessus API Secret Key', default=0)
+parser.add_argument('--test-api', action='store_true', help='Test API Key')
 args = parser.parse_args()
-
-def smart_str(x):
-    if isinstance(x, unicode):
-        return unicode(x).encode("utf-8")
-    elif isinstance(x, int) or isinstance(x, float):
-        return str(x)
-    return x
 
 def build_url(resource):
     nessus_url = "https://"+args.url+":8834"
@@ -55,7 +51,7 @@ def connect(method, resource, data=None):
     is available add it to the request. Specify the content type as JSON and
     convert the data to JSON format.
     """
-    headers = {'X-Cookie': 'token={0}'.format(token),
+    headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}',
                'content-type': 'application/json'}
 
     data = json.dumps(data)
@@ -72,7 +68,7 @@ def connect(method, resource, data=None):
     # Exit if there is an error.
     if r.status_code != 200:
         e = r.json()
-        print e['error']
+        print(e['error'])
         sys.exit()
 
     # When downloading a scan we need the raw contents not the JSON data. 
@@ -81,21 +77,8 @@ def connect(method, resource, data=None):
     else:
         return r.json()
 
-def login(usr, pwd):
-    """
-    Login to nessus.
-    """
-    login = {'username': usr, 'password': pwd}
-    data = connect('POST', '/session', data=login)
-
-    print data['token']
-    return data['token']
-
-def logout():
-    """
-    Logout of nessus.
-    """
-    connect('DELETE', '/session')
+def list_folders():
+    return connect('GET', '/folders')
 
 def get_format():
     # TODO: Add support for more formats if needed
@@ -103,19 +86,16 @@ def get_format():
 
 def get_scans():
     """
-    Get Scans from JSON data
+    Get Scans of specific folder 
     """
-    scans_to_export = {}
+    scans_to_export = {}    
+    data = connect('GET', f'/scans?folder_id={args.folder}')
+    all_folder_scans = data['scans']
+    
+    for scans in all_folder_scans:
+        scans_to_export[scans['id']] = str(scans['name'])
 
-    data = connect('GET', '/scans')
-    all_scans = data['scans']
-
-    # Create dictionary mapping scanid:scan_name (This case scan_name = host ip)
-    folder = args.folder
-    for scans in all_scans:
-        if scans['folder_id'] == int(folder):
-            scans_to_export[scans['id']] = smart_str(scans['name'])
-
+    print(json.dumps(scans_to_export, indent=4))
     return scans_to_export
 
 def export_status(sid, fid):
@@ -146,7 +126,7 @@ def export(scans):
     # Create dictionary mapping scan_id:file_id (File ID is used to download the file)
     for scan_id in scans.keys():
         # Attempt to Export scans
-        print "Exporting {0}".format(scans[scan_id])
+        print("Exporting {0}".format(scans[scan_id]))
         data = connect('POST', '/scans/{0}/export'.format(scan_id), data=params)
         fids[scan_id] = data['file']
         
@@ -154,23 +134,28 @@ def export(scans):
             time.sleep(5)
 
         # Attempt to Download scans
-        print "Downloading {0}".format(scans[scan_id])
+        print("Downloading {0}".format(scans[scan_id]))
         data = connect('GET', '/scans/{0}/export/{1}/download'.format(scan_id, fids[scan_id]))
         scan_name = '{0}.{1}'.format(scans[scan_id],params['format'])
         scan_name_duplicate = 0
         while True:
             if scan_name in os.listdir(args.output):
-                print "Duplicate Scan Name!"
+                print("Duplicate Scan Name!")
                 scan_name_duplicate += 1
                 scan_name = '{0}_{1}.{2}'.format(scans[scan_id], str(scan_name_duplicate), params['format'])                
             else:
                 break
 
         print('Saving scan results to {0}.'.format(scan_name))
+        
+        # replace / with _ in scan_name
+        if '/' in scan_name:
+            scan_name = scan_name.replace('/', '_')
+
         with open(os.path.join(args.output, scan_name), 'w') as f:
             f.write(data)
 
-    print "All Downloads complete! hax0r"
+    print("All Downloads complete! hax0r")
 
 def merge():
     first = 1
@@ -188,37 +173,42 @@ def merge():
                 for host in tree.findall('.//ReportHost'):
                     existing_host = report.find(".//ReportHost[@name='"+host.attrib['name']+"']")
                     if not existing_host:
-                        print "adding host: " + host.attrib['name']
+                        print("adding host: " + host.attrib['name'])
                         report.append(host)
                     else:
                         for item in host.findall('ReportItem'):
                             if not existing_host.find("ReportItem[@port='"+ item.attrib['port'] +"'][@pluginID='"+ item.attrib['pluginID'] +"']"):
-                                print "adding finding: " + item.attrib['port'] + ":" + item.attrib['pluginID']
+                                print("adding finding: " + item.attrib['port'] + ":" + item.attrib['pluginID'])
                                 existing_host.append(item)
         print(":: => done.")
      
     with open(os.path.join(args.output, "nessus_merged.nessus"), 'w') as merged_file:
         mainTree.write(merged_file, encoding="utf-8", xml_declaration=True)
 
-    print "All .nessus files merged to 'nessus_merged.nessus' file in current dir"
+    print("All .nessus files merged to 'nessus_merged.nessus' file in current dir")
 
-if __name__ == '__main__':
-    # Download Files
-    if args.export or args.merge:
-        if args.export:
-            # Login
-            username = raw_input("Username: ")
-            password = getpass.getpass("Password: ")
-            print('Logging in....')
-            token = login(username, password)
-            
-            print("Getting scan List....")
-            scans = get_scans()
+# if __name__ == '__main__':
+#     # Download Files
+#     if args.export or args.merge:
+#         if args.export:
+#             # Check API key
+#             if args.access and args.secret:
+#                 print("Getting scan List....")
+#                 scans = get_scans()
 
-            print('Downloading and Exporting Scans...')
-            export(scans)
-            # Merge files
-        if args.merge:
-            merge()
-    else:
-        print parser.format_usage() # removes newline + None when print_usage() is used
+#                 print('Downloading and Exporting Scans...')
+#                 export(scans)
+
+#         if args.merge:
+#             merge()
+
+#     elif args.test_api:
+#         if args.access and args.secret:
+#             print(json.dumps(connect('GET', '/folders'), indent=4))
+#         else:
+#             print("Missing API keys")
+#             sys.exit()
+
+#     else:
+#         print(parser.format_usage()) # removes newline + None when print_usage() is used
+get_scans()
