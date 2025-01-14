@@ -23,9 +23,7 @@ import xml.etree.ElementTree as etree
 
 # Hard-coded variables
 requests.packages.urllib3.disable_warnings()
-
 verify = False
-token = ''
 
 parser = argparse.ArgumentParser(description='Download Nesuss results in bulk / Merge Nessus files')
 parser.add_argument('--url', '-u', type=str, default='localhost', help="url to nessus instance! This or --merge must be specified")
@@ -187,28 +185,27 @@ def merge():
 
     print("All .nessus files merged to 'nessus_merged.nessus' file in current dir")
 
-# if __name__ == '__main__':
-#     # Download Files
-#     if args.export or args.merge:
-#         if args.export:
-#             # Check API key
-#             if args.access and args.secret:
-#                 print("Getting scan List....")
-#                 scans = get_scans()
+if __name__ == '__main__':
+    # Download Files
+    if args.export or args.merge:
+        if args.export:
+            # Check API key
+            if args.access and args.secret:
+                print("Getting scan List....")
+                scans = get_scans()
 
-#                 print('Downloading and Exporting Scans...')
-#                 export(scans)
+                print('Downloading and Exporting Scans...')
+                export(scans)
 
-#         if args.merge:
-#             merge()
+        if args.merge:
+            merge()
 
-#     elif args.test_api:
-#         if args.access and args.secret:
-#             print(json.dumps(connect('GET', '/folders'), indent=4))
-#         else:
-#             print("Missing API keys")
-#             sys.exit()
+    elif args.test_api:
+        if args.access and args.secret:
+            print(json.dumps(connect('GET', '/folders'), indent=4))
+        else:
+            print("Missing API keys")
+            sys.exit()
 
-#     else:
-#         print(parser.format_usage()) # removes newline + None when print_usage() is used
-get_scans()
+    else:
+        print(parser.format_usage()) # removes newline + None when print_usage() is used
