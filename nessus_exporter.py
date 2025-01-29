@@ -34,7 +34,7 @@ parser.add_argument('-e', '--export', action='store_true', help='Export files')
 parser.add_argument('--folder','-f', type=str, help='Scan Folder from which to download', default=0)
 parser.add_argument('--access', type=str, help='Nessus API Access Key', default=0)
 parser.add_argument('--secret', type=str, help='Nessus API Secret Key', default=0)
-parser.add_argument('--test-api', action='store_true', help='Test API Key')
+parser.add_argument('-l', '--test-api', action='store_true', help='List folders / Test API Key')
 args = parser.parse_args()
 
 def build_url(resource):
