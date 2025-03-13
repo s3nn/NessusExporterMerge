@@ -26,7 +26,8 @@ requests.packages.urllib3.disable_warnings()
 verify = False
 
 parser = argparse.ArgumentParser(description='Download Nesuss results in bulk / Merge Nessus files')
-parser.add_argument('--url', '-u', type=str, default='localhost', help="url to nessus instance! This or --merge must be specified")
+parser.add_argument('--url', type=str, default='localhost', help="url to nessus instance! This or --merge must be specified")
+parser.add_argument('--upload', action='store_true', help='Upload file, needs to be called file_name')
 parser.add_argument('--format','-F', type=str, default="html", choices=['nessus', 'html'], help='Format of nesuss output, defaults to html')
 parser.add_argument('-o', '--output', type=str, default=os.getcwd(), help='Output directory')
 parser.add_argument('-m', '--merge', action='store_true', help='Merge all .nessus files in output directory')
@@ -41,7 +42,7 @@ def build_url(resource):
     nessus_url = "https://"+args.url+":8834"
     return '{0}{1}'.format(nessus_url, resource)
 
-def connect(method, resource, data=None):
+def connect(method, resource, data=None, files=None):
     """
     Send a request
 
@@ -49,13 +50,14 @@ def connect(method, resource, data=None):
     is available add it to the request. Specify the content type as JSON and
     convert the data to JSON format.
     """
-    headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}',
-               'content-type': 'application/json'}
-
+    headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}', 'content-type': 'application/json'}
+    
+    # TODO: implement cookie auth in case API keys not working
+    #headers = {'X-Cookie': 'token=COOKIE', 'content-type': 'application/json'}
     data = json.dumps(data)
 
     if method == 'POST':
-        r = requests.post(build_url(resource), data=data, headers=headers, verify=verify)
+            r = requests.post(build_url(resource), data=data, headers=headers, verify=verify, files=files)
     elif method == 'PUT':
         r = requests.put(build_url(resource), data=data, headers=headers, verify=verify)
     elif method == 'DELETE':
@@ -74,6 +76,45 @@ def connect(method, resource, data=None):
         return r.content
     else:
         return r.json()
+
+# not working in Nessus Professional
+def upload():
+    file_name = 'nessus_merged.nessus'
+    try:
+        # with open(file_name, "rb") as f:
+        #     # Upload file first, needs to be called file_name
+        #     files = {"Filedata": (file_name, f.read(), "text/xml")}
+        #     connect('POST', '/file/upload', files=files)
+        #     print(f"[*] Uploading merged file..")
+
+        with open(file_name, "rb") as f:
+            headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}'}
+            url = "https://localhost:8834/file/upload"
+            files = {"Filedata": (file_name.split("/")[-1], f, "text/xml")}
+            response = requests.post(
+                url,
+                headers=headers,
+                files=files,
+                verify=False  # Bypass SSL verification for localhost
+                )
+
+        # Send to folder
+        params = {'folder_id': args.folder, 'file': file_name }
+        url = "https://localhost:8834/scans/import"
+        headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}', 'content-type': 'application/json'}
+        http_proxy = 'https://127.0.0.1:8080'
+        proxyDict = {"https" : http_proxy}
+        response = requests.post(
+                url,
+                headers=headers,
+                json=params,
+                verify=False,
+                proxies=proxyDict
+            )
+        print(f"[*] Moving merged file to correct folder..")
+
+    except FileNotFoundError:
+        print(f"Error: File not found at {file_path}")
 
 def list_folders():
     return connect('GET', '/folders')
@@ -150,7 +191,7 @@ def export(scans):
         if '/' in scan_name:
             scan_name = scan_name.replace('/', '_')
 
-        with open(os.path.join(args.output, scan_name), 'w') as f:
+        with open(os.path.join(args.output, scan_name), 'wb') as f:
             f.write(data)
 
     print("All Downloads complete! hax0r")
@@ -180,14 +221,14 @@ def merge():
                                 existing_host.append(item)
         print(":: => done.")
      
-    with open(os.path.join(args.output, "nessus_merged.nessus"), 'w') as merged_file:
+    with open(os.path.join(args.output, "nessus_merged.nessus"), 'wb') as merged_file:
         mainTree.write(merged_file, encoding="utf-8", xml_declaration=True)
 
     print("All .nessus files merged to 'nessus_merged.nessus' file in current dir")
 
 if __name__ == '__main__':
     # Download Files
-    if args.export or args.merge:
+    if args.export or args.merge or args.upload:
         if args.export:
             # Check API key
             if args.access and args.secret:
@@ -199,6 +240,9 @@ if __name__ == '__main__':
 
         if args.merge:
             merge()
+
+        if args.upload:
+            upload()
 
     elif args.test_api:
         if args.access and args.secret:
