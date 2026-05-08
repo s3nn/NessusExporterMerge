@@ -1,17 +1,18 @@
-#!usr/bin/python
+#!/usr/bin/env python3
 # Modified from averagesecurityguy
 # Props to him
-# https://github.com/averagesecurityguy/
+# [https://github.com/averagesecurityguy/](https://github.com/averagesecurityguy/)
 #
 # Command-line parser taken from from below:
-# by Konrads Smelkovs (https://github.com/truekonrads)       
-# 
+# by Konrads Smelkovs (https://github.com/truekonrads)
+#
 # merger.py
-# based off: http://cmikavac.net/2011/07/09/merging-multiple-nessus-scans-python-script/
+# based off: [http://cmikavac.net/2011/07/09/merging-multiple-nessus-scans-python-script/](http://cmikavac.net/2011/07/09/merging-multiple-nessus-scans-python-script/)
 # by: mastahyeti
 #
 # Everything glued together by _sen
 
+import re
 import requests
 import json
 import time
@@ -21,235 +22,326 @@ import sys
 import getpass
 import xml.etree.ElementTree as etree
 
-# Hard-coded variables
 requests.packages.urllib3.disable_warnings()
 verify = False
 
-parser = argparse.ArgumentParser(description='Download Nesuss results in bulk / Merge Nessus files')
-parser.add_argument('--url', type=str, default='localhost', help="url to nessus instance! This or --merge must be specified")
-parser.add_argument('--upload', action='store_true', help='Upload file, needs to be called file_name')
-parser.add_argument('--format','-F', type=str, default="html", choices=['nessus', 'html'], help='Format of nesuss output, defaults to html')
+parser = argparse.ArgumentParser(description='Download Nessus results in bulk / Merge Nessus files')
+parser.add_argument('--url', type=str, default='localhost', help="URL to Nessus instance")
+parser.add_argument('--upload', action='store_true', help='Upload and import the merged .nessus file')
+parser.add_argument('--format', '-F', type=str, default="html", choices=['nessus', 'html'], help='Export format, defaults to html')
 parser.add_argument('-o', '--output', type=str, default=os.getcwd(), help='Output directory')
-parser.add_argument('-m', '--merge', action='store_true', help='Merge all .nessus files in output directory')
+parser.add_argument('-m', '--merge', nargs='?', const=True, default=False,
+                    help='Merge all .nessus files in output directory. Optionally provide a report name, e.g. -m "Client A". If --folder is also set, folder name takes priority.')
 parser.add_argument('-e', '--export', action='store_true', help='Export files')
-parser.add_argument('--folder','-f', type=str, help='Scan Folder from which to download', default=0)
-parser.add_argument('--access', type=str, help='Nessus API Access Key', default=0)
-parser.add_argument('--secret', type=str, help='Nessus API Secret Key', default=0)
-parser.add_argument('-l', '--test-api', action='store_true', help='List folders / Test API Key')
+parser.add_argument('--folder', '-f', type=str, help='Scan folder ID', default=0)
+parser.add_argument('--access', type=str, help='Nessus API Access Key', default=None)
+parser.add_argument('--secret', type=str, help='Nessus API Secret Key', default=None)
+parser.add_argument('--username', '-u', type=str, help='Nessus username (required for --upload on Nessus Professional)', default=None)
+parser.add_argument('-l', '--test-api', action='store_true', help='List folders / Test API key')
 args = parser.parse_args()
 
+
 def build_url(resource):
-    nessus_url = "https://"+args.url+":8834"
-    return '{0}{1}'.format(nessus_url, resource)
+    return f"https://{args.url}:8834{resource}"
+
 
 def connect(method, resource, data=None, files=None):
     """
-    Send a request
-
-    Send a request to Nessus based on the specified data. If the session token
-    is available add it to the request. Specify the content type as JSON and
-    convert the data to JSON format.
+    Send a request to Nessus using API key authentication.
+    For --upload, use upload() which handles session auth instead.
     """
-    headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}', 'content-type': 'application/json'}
-    
-    # TODO: implement cookie auth in case API keys not working
-    #headers = {'X-Cookie': 'token=COOKIE', 'content-type': 'application/json'}
-    data = json.dumps(data)
+    headers = {
+        'X-ApiKeys': f'accessKey={args.access};secretKey={args.secret}',
+        'content-type': 'application/json'
+    }
+    encoded = json.dumps(data) if data is not None else None
 
     if method == 'POST':
-            r = requests.post(build_url(resource), data=data, headers=headers, verify=verify, files=files)
+        r = requests.post(build_url(resource), data=encoded, headers=headers, verify=verify, files=files)
     elif method == 'PUT':
-        r = requests.put(build_url(resource), data=data, headers=headers, verify=verify)
+        r = requests.put(build_url(resource), data=encoded, headers=headers, verify=verify)
     elif method == 'DELETE':
-        r = requests.delete(build_url(resource), data=data, headers=headers, verify=verify)
+        r = requests.delete(build_url(resource), data=encoded, headers=headers, verify=verify)
     else:
         r = requests.get(build_url(resource), params=data, headers=headers, verify=verify)
 
-    # Exit if there is an error.
     if r.status_code != 200:
-        e = r.json()
-        print(e['error'])
-        sys.exit()
+        print(r.json().get('error', 'Unknown error'))
+        sys.exit(1)
 
-    # When downloading a scan we need the raw contents not the JSON data. 
-    if 'download' in resource:
-        return r.content
-    else:
-        return r.json()
+    return r.content if 'download' in resource else r.json()
 
-# not working in Nessus Professional
-def upload():
-    file_name = 'nessus_merged.nessus'
+
+def get_session():
+    """
+    Authenticate with Nessus using username/password.
+    Returns a requests.Session with:
+      - X-Cookie: token=<session_token>     (auth)
+      - X-API-Token: <UUID from nessus6.js> (CSRF guard — required for /scans/import)
+    """
+    username = args.username
+    password = getpass.getpass(f"[*] Password for '{username}': ")
+
+    print("[*] Authenticating with username/password..")
+    login_response = requests.post(
+        build_url("/session"),
+        json={"username": username, "password": password},
+        verify=False
+    )
+    login_response.raise_for_status()
+    session_token = login_response.json().get("token")
+    if not session_token:
+        raise ValueError(f"[!] Login failed — no token in response: {login_response.json()}")
+    print("[*] Session token obtained.")
+
+    session = requests.Session()
+    session.verify = False
+    session.headers.update({"X-Cookie": f"token={session_token}"})
+
+    # X-API-Token is a static CSRF UUID embedded in nessus6.js
+    # Required for all mutating requests — connection reset without it
+    print("[*] Fetching X-API-Token..")
+    js_response = session.get(build_url("/nessus6.js"), verify=False)
+    js_response.raise_for_status()
+
+    match = re.search(r'key:"getApiToken",value:function\(\)\{return"([^"]+)"', js_response.text)
+    if not match:
+        match = re.search(r'"([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})"', js_response.text)
+    if not match:
+        raise ValueError("[!] Could not extract X-API-Token from nessus6.js")
+
+    session.headers.update({"X-API-Token": match.group(1)})
+    print("[*] Session ready.")
+    return session
+
+
+def get_merge_name(folder_name=None):
+    """
+    Resolve the merged report name in priority order:
+      1. folder_name passed in (resolved by caller via API)
+      2. Value passed directly to -m flag
+      3. Fallback: 'Merged Report'
+    Format: '{NAME} - MERGED'
+
+    Conflict resolution (folder_name + -m value both set) is handled by the caller
+    before this function is invoked.
+    """
+    merge_arg = args.merge  # True if -m with no value, str if -m "some name"
+
+    if folder_name:
+        return f"{folder_name} - MERGED"
+
+    if isinstance(merge_arg, str):
+        return f"{merge_arg} - MERGED"
+
+    return "Merged Report - MERGED"
+
+
+def resolve_folder_name():
+    """
+    Look up the folder name for args.folder via the API.
+    Returns the folder name string, or None if not found.
+    Called only when API keys are confirmed available.
+    """
     try:
-        # with open(file_name, "rb") as f:
-        #     # Upload file first, needs to be called file_name
-        #     files = {"Filedata": (file_name, f.read(), "text/xml")}
-        #     connect('POST', '/file/upload', files=files)
-        #     print(f"[*] Uploading merged file..")
+        folders = connect('GET', '/folders')
+        return next(
+            (f['name'] for f in folders.get('folders', []) if str(f['id']) == str(args.folder)),
+            None
+        )
+    except Exception:
+        return None
+
+
+def upload(report_name):
+    """
+    Upload the merged .nessus file and import it into Nessus.
+
+    Requires username/password auth — POST /scans/import is blocked by Nessus
+    Professional when using API keys. Session-based auth replicates the browser flow.
+
+    report_name is passed in (resolved by __main__) to derive the correct filename.
+    """
+    safe_filename = report_name.replace('/', '_').replace('\\', '_') + ".nessus"
+    file_name = os.path.join(args.output, safe_filename)
+
+    try:
+        session = get_session()
+
+        print("[*] Uploading merged file..")
+        if not os.path.exists(file_name):
+            raise FileNotFoundError(file_name)
 
         with open(file_name, "rb") as f:
-            headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}'}
-            url = "https://localhost:8834/file/upload"
-            files = {"Filedata": (file_name.split("/")[-1], f, "text/xml")}
-            response = requests.post(
-                url,
-                headers=headers,
-                files=files,
-                verify=False  # Bypass SSL verification for localhost
-                )
-
-        # Send to folder
-        params = {'folder_id': args.folder, 'file': file_name }
-        url = "https://localhost:8834/scans/import"
-        headers = {'X-ApiKeys': f'accessKey={args.access}; secretKey={args.secret}', 'content-type': 'application/json'}
-        http_proxy = 'https://127.0.0.1:8080'
-        proxyDict = {"https" : http_proxy}
-        response = requests.post(
-                url,
-                headers=headers,
-                json=params,
-                verify=False,
-                proxies=proxyDict
+            files = {"Filedata": (os.path.basename(file_name), f, "text/xml")}
+            upload_response = session.post(
+                build_url("/file/upload"),
+                params={"no_enc": 1},
+                files=files
             )
-        print(f"[*] Moving merged file to correct folder..")
+        upload_response.raise_for_status()
 
-    except FileNotFoundError:
-        print(f"Error: File not found at {file_path}")
+        uploaded_filename = upload_response.json().get("fileuploaded")
+        if not uploaded_filename:
+            print(f"[!] Upload failed. Response: {upload_response.json()}")
+            return
+        print(f"[*] File uploaded as: {uploaded_filename}")
 
-def list_folders():
-    return connect('GET', '/folders')
+        print("[*] Importing scan into Nessus..")
+        import_payload = {"file": uploaded_filename}
+        if args.folder:
+            import_payload["folder_id"] = int(args.folder)
 
-def get_format():
-    # TODO: Add support for more formats if needed
-    return args.format   
+        session.headers.update({"Content-Type": "application/json"})
+        import_response = session.post(build_url("/scans/import"), json=import_payload)
+        import_response.raise_for_status()
+        print(f"[*] Import successful: {import_response.json()}")
+
+    except FileNotFoundError as e:
+        print(f"[!] Error: File not found: {e}")
+    except requests.exceptions.HTTPError as e:
+        print(f"[!] HTTP error: {e.response.status_code} — {e.response.text}")
+    except requests.exceptions.ConnectionError as e:
+        print(f"[!] Connection error: {e}")
+    except Exception as e:
+        print(f"[!] Unexpected error: {e}")
+
 
 def get_scans():
-    """
-    Get Scans of specific folder 
-    """
-    scans_to_export = {}    
+    """Get scans from a specific folder."""
     data = connect('GET', f'/scans?folder_id={args.folder}')
-    all_folder_scans = data['scans']
-    
-    for scans in all_folder_scans:
-        scans_to_export[scans['id']] = str(scans['name'])
-
+    scans_to_export = {s['id']: str(s['name']) for s in data['scans']}
     print(json.dumps(scans_to_export, indent=4))
     return scans_to_export
 
+
 def export_status(sid, fid):
-    """
-    Check export status
-
-    Check to see if the export is ready for download.
-    """
-    data = connect('GET', '/scans/{0}/export/{1}/status'.format(sid, fid))
-
+    """Returns True when the export is ready for download."""
+    data = connect('GET', f'/scans/{sid}/export/{fid}/status')
     return data['status'] == 'ready'
 
 
 def export(scans):
-    """
-    Make an export request
+    """Export and download scan results."""
+    params = {'format': args.format, 'chapters': 'vuln_by_host'}
 
-    Request an export of the scan results for the specified scan and
-    historical run. In this case the format is hard coded as nessus but the
-    format can be any one of nessus, html, pdf, csv, or db. Once the request
-    is made, we have to wait for the export to be ready.
-    """
-    # get format for export and handle POST params
-    export_format = get_format()
-    params = {'format': export_format, 'chapters': 'vuln_by_host'}
-    
-    fids = {}
-    # Create dictionary mapping scan_id:file_id (File ID is used to download the file)
-    for scan_id in scans.keys():
-        # Attempt to Export scans
-        print("Exporting {0}".format(scans[scan_id]))
-        data = connect('POST', '/scans/{0}/export'.format(scan_id), data=params)
-        fids[scan_id] = data['file']
-        
-        while export_status(scan_id, fids[scan_id]) is False:
+    for scan_id, scan_name in scans.items():
+        print(f"Exporting {scan_name}")
+        data = connect('POST', f'/scans/{scan_id}/export', data=params)
+        file_id = data['file']
+
+        while not export_status(scan_id, file_id):
             time.sleep(5)
 
-        # Attempt to Download scans
-        print("Downloading {0}".format(scans[scan_id]))
-        data = connect('GET', '/scans/{0}/export/{1}/download'.format(scan_id, fids[scan_id]))
-        scan_name = '{0}.{1}'.format(scans[scan_id],params['format'])
-        scan_name_duplicate = 0
-        while True:
-            if scan_name in os.listdir(args.output):
-                print("Duplicate Scan Name!")
-                scan_name_duplicate += 1
-                scan_name = '{0}_{1}.{2}'.format(scans[scan_id], str(scan_name_duplicate), params['format'])                
-            else:
-                break
+        print(f"Downloading {scan_name}")
+        data = connect('GET', f'/scans/{scan_id}/export/{file_id}/download')
 
-        print('Saving scan results to {0}.'.format(scan_name))
-        
-        # replace / with _ in scan_name
-        if '/' in scan_name:
-            scan_name = scan_name.replace('/', '_')
+        out_name = f"{scan_name}.{args.format}".replace('/', '_')
+        duplicate = 0
+        while out_name in os.listdir(args.output):
+            print("Duplicate scan name!")
+            duplicate += 1
+            out_name = f"{scan_name}_{duplicate}.{args.format}".replace('/', '_')
 
-        with open(os.path.join(args.output, scan_name), 'wb') as f:
+        print(f"Saving scan results to {out_name}.")
+        with open(os.path.join(args.output, out_name), 'wb') as f:
             f.write(data)
 
-    print("All Downloads complete! hax0r")
+    print("All downloads complete! hax0r")
 
-def merge():
-    first = 1
+
+def merge(report_name):
+    """
+    Merge all .nessus files in the output directory into a single file.
+    report_name is passed in (resolved by __main__).
+    """
+    safe_filename = report_name.replace('/', '_').replace('\\', '_') + ".nessus"
+    out_path = os.path.join(args.output, safe_filename)
+
+    mainTree = None
+    report = None
+
     for fileName in os.listdir(args.output):
-        fileName = os.path.join(args.output, fileName)
-        if ".nessus" in fileName:
-            print(":: Parsing", fileName)
-            if first:
-                mainTree = etree.parse(fileName)
-                report = mainTree.find('Report')
-                report.attrib['name'] = 'Merged Report'
-                first = 0
-            else:
-                tree = etree.parse(fileName)
-                for host in tree.findall('.//ReportHost'):
-                    existing_host = report.find(".//ReportHost[@name='"+host.attrib['name']+"']")
-                    if not existing_host:
-                        print("adding host: " + host.attrib['name'])
-                        report.append(host)
-                    else:
-                        for item in host.findall('ReportItem'):
-                            if not existing_host.find("ReportItem[@port='"+ item.attrib['port'] +"'][@pluginID='"+ item.attrib['pluginID'] +"']"):
-                                print("adding finding: " + item.attrib['port'] + ":" + item.attrib['pluginID'])
-                                existing_host.append(item)
+        if not fileName.endswith(".nessus") or fileName == safe_filename:
+            continue
+
+        full_path = os.path.join(args.output, fileName)
+        print(f":: Parsing {full_path}")
+
+        if mainTree is None:
+            mainTree = etree.parse(full_path)
+            report = mainTree.find('Report')
+            report.attrib['name'] = report_name
+        else:
+            tree = etree.parse(full_path)
+            for host in tree.findall('.//ReportHost'):
+                existing_host = report.find(f".//ReportHost[@name='{host.attrib['name']}']")
+                if not existing_host:
+                    print(f"  adding host: {host.attrib['name']}")
+                    report.append(host)
+                else:
+                    for item in host.findall('ReportItem'):
+                        if not existing_host.find(f"ReportItem[@port='{item.attrib['port']}'][@pluginID='{item.attrib['pluginID']}']"):
+                            print(f"  adding finding: {item.attrib['port']}:{item.attrib['pluginID']}")
+                            existing_host.append(item)
         print(":: => done.")
-     
-    with open(os.path.join(args.output, "nessus_merged.nessus"), 'wb') as merged_file:
+
+    if mainTree is None:
+        print("[!] No .nessus files found in output directory.")
+        return
+
+    with open(out_path, 'wb') as merged_file:
         mainTree.write(merged_file, encoding="utf-8", xml_declaration=True)
 
-    print("All .nessus files merged to 'nessus_merged.nessus' file in current dir")
+    print(f"[*] All .nessus files merged to '{safe_filename}'")
+
 
 if __name__ == '__main__':
-    # Download Files
     if args.export or args.merge or args.upload:
+
         if args.export:
-            # Check API key
-            if args.access and args.secret:
-                print("Getting scan List....")
-                scans = get_scans()
+            if not (args.access and args.secret):
+                print("[!] --export requires --access and --secret API keys.")
+                sys.exit(1)
+            print("Getting scan list....")
+            scans = get_scans()
+            print('Downloading and Exporting Scans...')
+            export(scans)
 
-                print('Downloading and Exporting Scans...')
-                export(scans)
+        if args.merge or args.upload:
+            # Resolve folder name via API if folder + API keys are both available
+            folder_name = None
+            if args.folder and args.access and args.secret:
+                folder_name = resolve_folder_name()
+                if not folder_name:
+                    print(f"[!] Warning: Could not resolve folder name for folder ID '{args.folder}'. Falling back to -m value or default.")
 
-        if args.merge:
-            merge()
+            # Conflict: both --folder (resolved) and -m "value" supplied — folder takes priority
+            if folder_name and isinstance(args.merge, str):
+                print(f"[!] Both --folder (resolves to '{folder_name}') and -m '{args.merge}' were supplied.")
+                choice = input(f"[?] Use folder name '{folder_name} - MERGED' as report name? [Y/N]: ").strip().lower()
+                if choice != 'y':
+                    print("[*] Aborting. Re-run with only one of --folder or a -m name value.")
+                    sys.exit(0)
 
-        if args.upload:
-            upload()
+            report_name = get_merge_name(folder_name=folder_name)
+            print(f"[*] Report name: '{report_name}'")
+
+            if args.merge:
+                merge(report_name)
+
+            if args.upload:
+                if not args.username:
+                    print("[!] --upload requires --username/-u.")
+                    print("[!] POST /scans/import is blocked for API key auth on Nessus Professional.")
+                    sys.exit(1)
+                upload(report_name)
 
     elif args.test_api:
-        if args.access and args.secret:
-            print(json.dumps(connect('GET', '/folders'), indent=4))
-        else:
-            print("Missing API keys")
-            sys.exit()
+        if not (args.access and args.secret):
+            print("[!] --test-api requires --access and --secret API keys.")
+            sys.exit(1)
+        print(json.dumps(connect('GET', '/folders'), indent=4))
 
     else:
-        print(parser.format_usage()) # removes newline + None when print_usage() is used
+        print(parser.format_usage())
