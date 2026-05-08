@@ -27,7 +27,8 @@ verify = False
 
 parser = argparse.ArgumentParser(description='Download Nessus results in bulk / Merge Nessus files')
 parser.add_argument('--url', type=str, default='localhost', help="URL to Nessus instance")
-parser.add_argument('--upload', action='store_true', help='Upload and import the merged .nessus file')
+parser.add_argument('--upload', nargs='?', const=True, default=False,
+                    help='Upload and import a .nessus file. Optionally specify filename, e.g. --upload myfile.nessus. If --merge is also used, the merged output filename is used automatically.')
 parser.add_argument('--format', '-F', type=str, default="html", choices=['nessus', 'html'], help='Export format, defaults to html')
 parser.add_argument('-o', '--output', type=str, default=os.getcwd(), help='Output directory')
 parser.add_argument('-m', '--merge', nargs='?', const=True, default=False,
@@ -80,7 +81,7 @@ def get_session():
       - X-API-Token: <UUID from nessus6.js> (CSRF guard — required for /scans/import)
     """
     username = args.username
-    password = getpass.getpass(f"[*] Password for '{username}': ")
+    password = args.password or getpass.getpass(f"[*] Password for '{username}': ")
 
     print("[*] Authenticating with username/password..")
     login_response = requests.post(
@@ -115,33 +116,11 @@ def get_session():
     return session
 
 
-def get_merge_name(folder_name=None):
-    """
-    Resolve the merged report name in priority order:
-      1. folder_name passed in (resolved by caller via API)
-      2. Value passed directly to -m flag
-      3. Fallback: 'Merged Report'
-    Format: '{NAME} - MERGED'
-
-    Conflict resolution (folder_name + -m value both set) is handled by the caller
-    before this function is invoked.
-    """
-    merge_arg = args.merge  # True if -m with no value, str if -m "some name"
-
-    if folder_name:
-        return f"{folder_name} - MERGED"
-
-    if isinstance(merge_arg, str):
-        return f"{merge_arg} - MERGED"
-
-    return "Merged Report - MERGED"
-
-
 def resolve_folder_name():
     """
     Look up the folder name for args.folder via the API.
     Returns the folder name string, or None if not found.
-    Called only when API keys are confirmed available.
+    Called only when API keys and folder ID are confirmed available.
     """
     try:
         folders = connect('GET', '/folders')
@@ -153,25 +132,55 @@ def resolve_folder_name():
         return None
 
 
-def upload(report_name):
+def get_merge_name():
     """
-    Upload the merged .nessus file and import it into Nessus.
+    Resolve the merged report name in priority order:
+      1. Folder name looked up via API (if --folder and API keys are available)
+      2. Value passed directly to -m flag
+      3. Fallback: 'Merged Report'
+    Format: '{NAME} - MERGED'
+
+    If both a resolved folder name and an explicit -m value are supplied,
+    the user is prompted to confirm which to use.
+    """
+    merge_arg = args.merge  # True if bare -m, str if -m "some name"
+    folder_name = None
+
+    if args.folder and args.access and args.secret:
+        folder_name = resolve_folder_name()
+        if not folder_name:
+            print(f"[!] Warning: Could not resolve folder name for folder ID '{args.folder}'. Falling back to -m value or default.")
+
+    # Conflict: folder resolved AND explicit -m name supplied — folder takes priority, but confirm
+    if folder_name and isinstance(merge_arg, str):
+        print(f"[!] Both --folder (resolves to '{folder_name}') and -m '{merge_arg}' were supplied.")
+        choice = input(f"[?] Use folder name '{folder_name} - MERGED' as report name? [Y/N]: ").strip().lower()
+        if choice != 'y':
+            print("[*] Aborting. Re-run with only one of --folder or a -m name value.")
+            sys.exit(0)
+
+    if folder_name:
+        return f"{folder_name} - MERGED"
+
+    if isinstance(merge_arg, str):
+        return f"{merge_arg} - MERGED"
+
+    return "Merged Report - MERGED"
+
+
+def upload():
+    """
+    Upload and import the file specified by args.upload into Nessus.
 
     Requires username/password auth — POST /scans/import is blocked by Nessus
     Professional when using API keys. Session-based auth replicates the browser flow.
-
-    report_name is passed in (resolved by __main__) to derive the correct filename.
     """
-    safe_filename = report_name.replace('/', '_').replace('\\', '_') + ".nessus"
-    file_name = os.path.join(args.output, safe_filename)
+    file_name = args.upload
 
     try:
         session = get_session()
 
-        print("[*] Uploading merged file..")
-        if not os.path.exists(file_name):
-            raise FileNotFoundError(file_name)
-
+        print(f"[*] Uploading {file_name}..")
         with open(file_name, "rb") as f:
             files = {"Filedata": (os.path.basename(file_name), f, "text/xml")}
             upload_response = session.post(
@@ -197,8 +206,8 @@ def upload(report_name):
         import_response.raise_for_status()
         print(f"[*] Import successful: {import_response.json()}")
 
-    except FileNotFoundError as e:
-        print(f"[!] Error: File not found: {e}")
+    except FileNotFoundError:
+        print(f"[!] Error: File not found: {file_name}")
     except requests.exceptions.HTTPError as e:
         print(f"[!] HTTP error: {e.response.status_code} — {e.response.text}")
     except requests.exceptions.ConnectionError as e:
@@ -250,19 +259,23 @@ def export(scans):
     print("All downloads complete! hax0r")
 
 
-def merge(report_name):
+def merge():
     """
     Merge all .nessus files in the output directory into a single file.
-    report_name is passed in (resolved by __main__).
+    Resolves the report name via get_merge_name() and sets args.upload
+    to the output path so upload() can consume it directly if --upload is also set.
     """
-    safe_filename = report_name.replace('/', '_').replace('\\', '_') + ".nessus"
-    out_path = os.path.join(args.output, safe_filename)
+    report_name = get_merge_name()
+    out_filename = report_name + ".nessus"
+    out_path = os.path.join(args.output, out_filename)
+
+    print(f"[*] Report name: '{report_name}'")
 
     mainTree = None
     report = None
 
     for fileName in os.listdir(args.output):
-        if not fileName.endswith(".nessus") or fileName == safe_filename:
+        if not fileName.endswith(".nessus") or os.path.join(args.output, fileName) == out_path:
             continue
 
         full_path = os.path.join(args.output, fileName)
@@ -293,7 +306,11 @@ def merge(report_name):
     with open(out_path, 'wb') as merged_file:
         mainTree.write(merged_file, encoding="utf-8", xml_declaration=True)
 
-    print(f"[*] All .nessus files merged to '{safe_filename}'")
+    print(f"[*] All .nessus files merged to '{out_path}'")
+
+    # Set args.upload to the merged output path so upload() uses it directly
+    if args.upload:
+        args.upload = out_path
 
 
 if __name__ == '__main__':
@@ -308,34 +325,20 @@ if __name__ == '__main__':
             print('Downloading and Exporting Scans...')
             export(scans)
 
-        if args.merge or args.upload:
-            # Resolve folder name via API if folder + API keys are both available
-            folder_name = None
-            if args.folder and args.access and args.secret:
-                folder_name = resolve_folder_name()
-                if not folder_name:
-                    print(f"[!] Warning: Could not resolve folder name for folder ID '{args.folder}'. Falling back to -m value or default.")
+        if args.merge:
+            merge()  # sets args.upload if --upload is also active
 
-            # Conflict: both --folder (resolved) and -m "value" supplied — folder takes priority
-            if folder_name and isinstance(args.merge, str):
-                print(f"[!] Both --folder (resolves to '{folder_name}') and -m '{args.merge}' were supplied.")
-                choice = input(f"[?] Use folder name '{folder_name} - MERGED' as report name? [Y/N]: ").strip().lower()
-                if choice != 'y':
-                    print("[*] Aborting. Re-run with only one of --folder or a -m name value.")
-                    sys.exit(0)
-
-            report_name = get_merge_name(folder_name=folder_name)
-            print(f"[*] Report name: '{report_name}'")
-
-            if args.merge:
-                merge(report_name)
-
-            if args.upload:
-                if not args.username:
-                    print("[!] --upload requires --username/-u.")
-                    print("[!] POST /scans/import is blocked for API key auth on Nessus Professional.")
-                    sys.exit(1)
-                upload(report_name)
+        if args.upload:
+            if not args.username:
+                print("[!] --upload requires --username/-u.")
+                print("[!] POST /scans/import is blocked for API key auth on Nessus Professional.")
+                sys.exit(1)
+            # If --upload was bare (True) and --merge wasn't used, no filename was resolved
+            if args.upload is True:
+                print("[!] --upload requires a filename, e.g. --upload myfile.nessus")
+                print("[!] Or use --merge together with --upload to upload the merged output automatically.")
+                sys.exit(1)
+            upload()
 
     elif args.test_api:
         if not (args.access and args.secret):
