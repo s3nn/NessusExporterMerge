@@ -39,6 +39,17 @@ Two authentication modes are supported depending on the operation:
 
 ***
 
+## Full pipeline: export → merge → upload (local Nessus instance)
+
+```bash
+python nessus_exporter.py --access 'access' --secret 'secret' --folder 13 -F nessus -e -m --upload -u user
+
+```
+
+For remote, just specify `--url` option/
+
+***
+
 ## Usage
 
 ### Export scans from a folder
@@ -46,8 +57,8 @@ Two authentication modes are supported depending on the operation:
 Downloads all scans from the specified folder to the current directory.
 
 ```bash
-python nessus.py --export --folder 42 --access <accessKey> --secret <secretKey>
-python nessus.py --export --folder 42 --access <accessKey> --secret <secretKey> -F nessus
+python /path/to/nessus_exporter.py --export --folder 42 --access <accessKey> --secret <secretKey>
+python /path/to/nessus_exporter.py --export --folder 42 --access <accessKey> --secret <secretKey> -F nessus
 ```
 
 - Default format is `html`. Use `-F nessus` to download raw `.nessus` files.
@@ -60,13 +71,13 @@ Merges all `.nessus` files in the current directory into a single file.
 
 ```bash
 # Auto-name from folder (requires API keys + --folder)
-python nessus.py -m --folder 42 --access <accessKey> --secret <secretKey>
+python /path/to/nessus_exporter.py -m --folder 42 --access <accessKey> --secret <secretKey>
 
 # Explicit report name
-python nessus.py -m "Client A"
+python /path/to/nessus_exporter.py -m "Client A"
 
 # Default name (outputs: 'Merged Report - MERGED.nessus')
-python nessus.py -m
+python /path/to/nessus_exporter.py -m
 ```
 
 Output filename format: `{NAME} - MERGED.nessus`
@@ -81,10 +92,10 @@ Uploads a `.nessus` file and imports it into a Nessus folder. Password is always
 
 ```bash
 # Upload a specific file
-python nessus.py --upload myfile.nessus --username admin --folder 42
+python /path/to/nessus_exporter.py --upload myfile.nessus --username admin --folder 42
 
 # Upload and move to default folder (folder_id 0)
-python nessus.py --upload myfile.nessus --username admin
+python /path/to/nessus_exporter.py --upload myfile.nessus --username admin
 ```
 
 ***
@@ -92,8 +103,8 @@ python nessus.py --upload myfile.nessus --username admin
 ### Merge and upload in one step
 
 ```bash
-python nessus.py -m "Client A" --upload --username admin --folder 42
-python nessus.py -m --folder 42 --access <accessKey> --secret <secretKey> --upload --username admin
+python /path/to/nessus_exporter.py -m "Client A" --upload --username admin --folder 42
+python /path/to/nessus_exporter.py -m --folder 42 --access <accessKey> --secret <secretKey> --upload --username admin
 ```
 
 When `--merge` and `--upload` are used together, the merged output file is passed to `--upload` automatically — no need to specify a filename.
@@ -103,7 +114,7 @@ When `--merge` and `--upload` are used together, the merged output file is passe
 ### Test API keys / list folders
 
 ```bash
-python nessus.py --test-api --access <accessKey> --secret <secretKey>
+python /path/to/nessus_exporter.py --test-api --access <accessKey> --secret <secretKey>
 ```
 
 ***
@@ -111,7 +122,7 @@ python nessus.py --test-api --access <accessKey> --secret <secretKey>
 ## All Options
 
 ```
-usage: nessus.py [--url URL] [--upload [FILE]] [--format {nessus,html}]
+usage: /path/to/nessus_exporter.py [--url URL] [--upload [FILE]] [--format {nessus,html}]
                  [-m [NAME]] [-e] [--folder ID]
                  [--access KEY] [--secret KEY]
                  [--username USER] [-l]
@@ -134,23 +145,10 @@ usage: nessus.py [--url URL] [--upload [FILE]] [--format {nessus,html}]
                         curl -k). Required for hosts with self-signed certs (e.g. localhost)
 ```
 
-***
-
-## Common Workflows
-
-### Full pipeline: export → merge → upload (local Nessus instance)
-
-```bash
-python nessus_exporter.py --access 'access' --secret 'secret' --folder 13 -F nessus -e -m --upload -u vlimma
-
-```
-
-For remote, just specify `--url` option/
-
-***
 
 ## Notes
 
+- Run from current directory of where you your files will be exported or where they currently at.
 - **Nessus Professional** This script is not designed for Tenable.io, Tenable.sc, or Nessus Manager — the upload workaround is specific to the local Nessus Pro API behaviour.
 - **SSL verification is enabled by default**. For localhost or other hosts using self-signed certs, use `-k`. 
 - **API keys are generated** under Nessus → Settings → My Account → API Keys.
