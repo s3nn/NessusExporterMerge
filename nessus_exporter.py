@@ -22,9 +22,6 @@ import sys
 import getpass
 import xml.etree.ElementTree as etree
 
-requests.packages.urllib3.disable_warnings()
-verify = False
-
 parser = argparse.ArgumentParser(
     description='Download Nessus results in bulk / Merge Nessus files. All files are read from and written to the current working directory.')
 parser.add_argument('--url', type=str, default='localhost', help="URL to Nessus instance")
@@ -39,7 +36,13 @@ parser.add_argument('--access', type=str, help='Nessus API Access Key', default=
 parser.add_argument('--secret', type=str, help='Nessus API Secret Key', default=None)
 parser.add_argument('--username', '-u', type=str, help='Nessus username (required for --upload on Nessus Professional)', default=None)
 parser.add_argument('-l', '--test-api', action='store_true', help='List folders / Test API key')
+parser.add_argument('-k', '--skip-tls', action='store_true', default=False,
+                    help='Skip SSL certificate verification (equivalent to curl -k). Not recommended for production use.')
 args = parser.parse_args()
+
+verify = not args.skip_tls
+if not verify:
+    requests.packages.urllib3.disable_warnings()
 
 
 def build_url(resource):
@@ -87,7 +90,7 @@ def get_session():
     login_response = requests.post(
         build_url("/session"),
         json={"username": username, "password": password},
-        verify=False
+        verify=verify
     )
     login_response.raise_for_status()
     session_token = login_response.json().get("token")
@@ -96,13 +99,13 @@ def get_session():
     print("[*] Session token obtained.")
 
     session = requests.Session()
-    session.verify = False
+    session.verify = verify
     session.headers.update({"X-Cookie": f"token={session_token}"})
 
     # X-API-Token is a static CSRF UUID embedded in nessus6.js
     # Required for all mutating requests — connection reset without it
     print("[*] Fetching X-API-Token..")
-    js_response = session.get(build_url("/nessus6.js"), verify=False)
+    js_response = session.get(build_url("/nessus6.js"), verify=verify)
     js_response.raise_for_status()
 
     match = re.search(r'key:"getApiToken",value:function\(\)\{return"([^"]+)"', js_response.text)
