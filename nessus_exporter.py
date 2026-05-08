@@ -25,15 +25,15 @@ import xml.etree.ElementTree as etree
 requests.packages.urllib3.disable_warnings()
 verify = False
 
-parser = argparse.ArgumentParser(description='Download Nessus results in bulk / Merge Nessus files')
+parser = argparse.ArgumentParser(
+    description='Download Nessus results in bulk / Merge Nessus files. All files are read from and written to the current working directory.')
 parser.add_argument('--url', type=str, default='localhost', help="URL to Nessus instance")
 parser.add_argument('--upload', nargs='?', const=True, default=False,
-                    help='Upload and import a .nessus file. Optionally specify filename, e.g. --upload myfile.nessus. If --merge is also used, the merged output filename is used automatically.')
+                    help='Upload and import a .nessus file from the current directory. Optionally specify filename, e.g. --upload myfile.nessus. If --merge is also used, the merged output file is uploaded automatically and the specified filename is disregarded.')
 parser.add_argument('--format', '-F', type=str, default="html", choices=['nessus', 'html'], help='Export format, defaults to html')
-parser.add_argument('-o', '--output', type=str, default=os.getcwd(), help='Output directory')
 parser.add_argument('-m', '--merge', nargs='?', const=True, default=False,
-                    help='Merge all .nessus files in output directory. Optionally provide a report name, e.g. -m "Client A". If --folder is also set, folder name takes priority.')
-parser.add_argument('-e', '--export', action='store_true', help='Export files')
+                    help='Merge all .nessus files in the current directory. Optionally provide a report name, e.g. -m "Client A". If --folder is also set, folder name takes priority.')
+parser.add_argument('-e', '--export', action='store_true', help='Export and download scan files to the current directory')
 parser.add_argument('--folder', '-f', type=str, help='Scan folder ID', default=0)
 parser.add_argument('--access', type=str, help='Nessus API Access Key', default=None)
 parser.add_argument('--secret', type=str, help='Nessus API Secret Key', default=None)
@@ -81,7 +81,7 @@ def get_session():
       - X-API-Token: <UUID from nessus6.js> (CSRF guard — required for /scans/import)
     """
     username = args.username
-    password = args.password or getpass.getpass(f"[*] Password for '{username}': ")
+    password = getpass.getpass(f"[*] Password for '{username}': ")
 
     print("[*] Authenticating with username/password..")
     login_response = requests.post(
@@ -231,7 +231,7 @@ def export_status(sid, fid):
 
 
 def export(scans):
-    """Export and download scan results."""
+    """Export and download scan results to the current directory."""
     params = {'format': args.format, 'chapters': 'vuln_by_host'}
 
     for scan_id, scan_name in scans.items():
@@ -247,13 +247,13 @@ def export(scans):
 
         out_name = f"{scan_name}.{args.format}".replace('/', '_')
         duplicate = 0
-        while out_name in os.listdir(args.output):
+        while out_name in os.listdir('.'):
             print("Duplicate scan name!")
             duplicate += 1
             out_name = f"{scan_name}_{duplicate}.{args.format}".replace('/', '_')
 
         print(f"Saving scan results to {out_name}.")
-        with open(os.path.join(args.output, out_name), 'wb') as f:
+        with open(out_name, 'wb') as f:
             f.write(data)
 
     print("All downloads complete! hax0r")
@@ -261,32 +261,29 @@ def export(scans):
 
 def merge():
     """
-    Merge all .nessus files in the output directory into a single file.
-    Resolves the report name via get_merge_name() and sets args.upload
-    to the output path so upload() can consume it directly if --upload is also set.
+    Merge all .nessus files in the current directory into a single file.
+    Sets args.upload to the output filename if --upload is also active.
     """
     report_name = get_merge_name()
     out_filename = report_name + ".nessus"
-    out_path = os.path.join(args.output, out_filename)
 
     print(f"[*] Report name: '{report_name}'")
 
     mainTree = None
     report = None
 
-    for fileName in os.listdir(args.output):
-        if not fileName.endswith(".nessus") or os.path.join(args.output, fileName) == out_path:
+    for fileName in os.listdir('.'):
+        if not fileName.endswith(".nessus") or fileName == out_filename:
             continue
 
-        full_path = os.path.join(args.output, fileName)
-        print(f":: Parsing {full_path}")
+        print(f":: Parsing {fileName}")
 
         if mainTree is None:
-            mainTree = etree.parse(full_path)
+            mainTree = etree.parse(fileName)
             report = mainTree.find('Report')
             report.attrib['name'] = report_name
         else:
-            tree = etree.parse(full_path)
+            tree = etree.parse(fileName)
             for host in tree.findall('.//ReportHost'):
                 existing_host = report.find(f".//ReportHost[@name='{host.attrib['name']}']")
                 if not existing_host:
@@ -300,17 +297,17 @@ def merge():
         print(":: => done.")
 
     if mainTree is None:
-        print("[!] No .nessus files found in output directory.")
+        print("[!] No .nessus files found in current directory.")
         return
 
-    with open(out_path, 'wb') as merged_file:
+    with open(out_filename, 'wb') as merged_file:
         mainTree.write(merged_file, encoding="utf-8", xml_declaration=True)
 
-    print(f"[*] All .nessus files merged to '{out_path}'")
+    print(f"[*] All .nessus files merged to '{out_filename}'")
 
-    # Set args.upload to the merged output path so upload() uses it directly
+    # Hand off to upload() by setting args.upload to the output filename
     if args.upload:
-        args.upload = out_path
+        args.upload = out_filename
 
 
 if __name__ == '__main__':
@@ -333,7 +330,6 @@ if __name__ == '__main__':
                 print("[!] --upload requires --username/-u.")
                 print("[!] POST /scans/import is blocked for API key auth on Nessus Professional.")
                 sys.exit(1)
-            # If --upload was bare (True) and --merge wasn't used, no filename was resolved
             if args.upload is True:
                 print("[!] --upload requires a filename, e.g. --upload myfile.nessus")
                 print("[!] Or use --merge together with --upload to upload the merged output automatically.")
